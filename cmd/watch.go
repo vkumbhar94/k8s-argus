@@ -10,6 +10,7 @@ import (
 	"github.com/logicmonitor/k8s-argus/pkg/connection"
 	"github.com/logicmonitor/k8s-argus/pkg/constants"
 	"github.com/logicmonitor/k8s-argus/pkg/healthz"
+	"github.com/logicmonitor/k8s-argus/pkg/jaeger"
 	lmlog "github.com/logicmonitor/k8s-argus/pkg/log"
 	"github.com/logicmonitor/k8s-argus/pkg/permission"
 	log "github.com/sirupsen/logrus"
@@ -39,6 +40,7 @@ var watchCmd = &cobra.Command{
 		}
 		// Monitor config for log level change
 		lmlog.MonitorConfig()
+		lmjaeger.Initialise(conf)
 
 		// Add hook to log pod id in log context
 		hook := &lmlog.DefaultFieldHook{}

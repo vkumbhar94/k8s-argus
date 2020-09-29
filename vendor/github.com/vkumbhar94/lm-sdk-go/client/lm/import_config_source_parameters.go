@@ -12,8 +12,8 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/go-openapi/errors"
-	"github.com/go-openapi/runtime"
-	cr "github.com/go-openapi/runtime/client"
+	"github.com/vkumbhar94/runtime"
+	cr "github.com/vkumbhar94/runtime/client"
 
 	strfmt "github.com/go-openapi/strfmt"
 )

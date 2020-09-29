@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"time"
 
-	httptransport "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	"github.com/logicmonitor/k8s-argus/pkg/config"
 	"github.com/logicmonitor/k8s-argus/pkg/constants"
@@ -29,6 +28,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/vkumbhar94/lm-sdk-go/client"
 	"github.com/vkumbhar94/lm-sdk-go/client/lm"
+	httptransport "github.com/vkumbhar94/runtime/client"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
@@ -290,7 +290,7 @@ func (a *Argus) Watch() {
 		_, controller := cache.NewInformer(
 			watchlist,
 			w.ObjType(),
-			time.Minute*10,
+			time.Minute*1,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc:    w.AddFunc(),
 				DeleteFunc: w.DeleteFunc(),

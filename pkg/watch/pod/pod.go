@@ -6,9 +6,11 @@ import (
 	"strconv"
 
 	"github.com/logicmonitor/k8s-argus/pkg/constants"
+	lmjaeger "github.com/logicmonitor/k8s-argus/pkg/jaeger"
 	"github.com/logicmonitor/k8s-argus/pkg/lmctx"
 	lmlog "github.com/logicmonitor/k8s-argus/pkg/log"
 	"github.com/logicmonitor/k8s-argus/pkg/types"
+	//"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,10 +54,16 @@ func (w *Watcher) AddFunc() func(obj interface{}) {
 		pod := obj.(*v1.Pod)
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + pod.Name}))
 		log := lmlog.Logger(lctx)
+		span := lmjaeger.StartSpan(lctx, "newPod")
+		defer span.Finish()
+		span.K8sObject("pod", pod)
+		span.SetTag("name", pod.Name)
 		log.Debugf("Handling add pod event: %s", pod.Name)
+		span.Info("event", "New pod created")
 
 		// Require an IP address.
 		if pod.Status.PodIP == "" {
+			span.Info("event", "No PodIP")
 			return
 		}
 		w.add(lctx, pod)
@@ -70,17 +78,27 @@ func (w *Watcher) UpdateFunc() func(oldObj, newObj interface{}) {
 
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + old.Name}))
 		log := lmlog.Logger(lctx)
+		span := lmjaeger.StartSpan(lctx, "updatePod")
+		defer span.Finish()
+		span.K8sObject("oldPod", old)
+		span.K8sObject("newPod", new)
+		span.SetTag("name", old.Name)
+		span.Info("event", old.Name+" replaced with "+new.Name)
+
 		log.Debugf("Handling update pod event: %s", old.Name)
 
 		// If the old pod does not have an IP, then there is no way we could
 		// have added it to LogicMonitor. Therefore, it must be a new w.
 		if old.Status.PodIP == "" && new.Status.PodIP != "" {
+			span.LogKV("event", "IP assigned first time, adding device")
 			w.add(lctx, new)
 			return
 		}
 
 		if new.Status.Phase == v1.PodSucceeded {
+			span.LogKV("New pod succcessfully created as replacement to old, deleting old device")
 			if err := w.DeleteByDisplayName(lctx, w.Resource(), old.Name); err != nil {
+				span.LogKV("level", "error", "event", "Failed to delete old pod")
 				log.Errorf("Failed to delete pod: %v", err)
 				return
 			}
@@ -102,14 +120,21 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + pod.Name}))
 		log := lmlog.Logger(lctx)
 
+		span := lmjaeger.StartSpan(lctx, "deletePod")
+		defer span.Finish()
+		span.K8sObject("pod", pod)
+		span.SetTag("name", pod.Name)
+
 		log.Debugf("Handling delete pod event: %s", pod.Name)
 
 		// Delete the pod.
 		if w.Config().DeleteDevices {
 			if err := w.DeleteByDisplayName(lctx, w.Resource(), pod.Name); err != nil {
+				span.Error("event", "Failed to delete", "message", err.Error())
 				log.Errorf("Failed to delete pod: %v", err)
 				return
 			}
+			span.Info("event", "Deleted")
 			log.Infof("Deleted pod %s", pod.Name)
 			return
 		}
@@ -123,18 +148,22 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 
 func (w *Watcher) add(lctx *lmctx.LMContext, pod *v1.Pod) {
 	log := lmlog.Logger(lctx)
+	span := lmjaeger.Span(lctx)
 
 	p, err := w.Add(lctx, w.Resource(), pod.Labels,
 		w.args(pod, constants.PodCategory)...,
 	)
 	if err != nil {
+		span.Error("event", "Failed to add", "message", err.Error())
 		log.Errorf("Failed to add pod %q: %v", pod.Name, err)
 		return
 	}
 
 	if p == nil {
+		span.Info("event", "Excluded as per filter rules")
 		log.Infof("pod %q is not added as it is mentioned for filtering.", pod.Name)
 	}
+	span.Info("event", "Added pod")
 	log.Infof("Added pod %q", pod.Name)
 }
 
@@ -146,23 +175,30 @@ func (w *Watcher) podUpdateFilter(old, new *v1.Pod) types.UpdateFilter {
 
 func (w *Watcher) update(lctx *lmctx.LMContext, old, new *v1.Pod) {
 	log := lmlog.Logger(lctx)
+	span := lmjaeger.Span(lctx)
 	if _, err := w.UpdateAndReplaceByDisplayName(lctx, "pods",
-		old.Name, w.podUpdateFilter(old, new), new.Labels,
+		//old.Name, w.(old, new), new.Labels,
+		old.Name, nil, new.Labels,
 		w.args(new, constants.PodCategory)...,
 	); err != nil {
+		span.Error("event", "Failed to update", "message", err.Error())
 		log.Errorf("Failed to update pod %q: %v", new.Name, err)
 		return
 	}
+	span.Info("event", "Updated pod")
 	log.Infof("Updated pod %q", old.Name)
 }
 
 // nolint: dupl
 func (w *Watcher) move(lctx *lmctx.LMContext, pod *v1.Pod) {
 	log := lmlog.Logger(lctx)
+	span := lmjaeger.Span(lctx)
 	if _, err := w.UpdateAndReplaceFieldByDisplayName(lctx, w.Resource(), pod.Name, constants.CustomPropertiesFieldName, w.args(pod, constants.PodDeletedCategory)...); err != nil {
+		span.Error("event", "Failed to move to _deleted device group", "message", err.Error())
 		log.Errorf("Failed to move pod %q: %v", pod.Name, err)
 		return
 	}
+	span.Info("event", "Moved to _deleted device group")
 	log.Infof("Moved pod %q", pod.Name)
 }
 

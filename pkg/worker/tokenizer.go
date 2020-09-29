@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	lmjaeger "github.com/logicmonitor/k8s-argus/pkg/jaeger"
 )
 
 // RLTokenizer tokenizer which contains regulated token generation
@@ -36,14 +38,22 @@ func NewRLTokenizer(limit int) *RLTokenizer {
 	}
 }
 
-func (rlt *RLTokenizer) popToken() error {
+func (rlt *RLTokenizer) popToken(span lmjaeger.LMSpan) error {
+	span.LogKV("event", "poping token")
 	if rlt.ctx.Err() != nil {
+		span.LogKV("event", "context is already canceled")
+		span.SetTag("parent-context", "cancelled")
 		return rlt.ctx.Err()
 	}
 	select {
 	case <-rlt.ch:
+		span.LogKV("event", "token poped")
 		return nil
 	case <-time.After(1 * time.Minute):
+		span.LogKV("event", "token pop timout")
+		span.SetTag("timeout", "1m")
+		span.SetTag("error", true)
+		span.LogKV("event", "timed out")
 		return errors.New("new token did not received in 1 minute, reconfigure tokenizer")
 	}
 }

@@ -8,7 +8,7 @@ package lm
 import (
 	"io"
 
-	"github.com/go-openapi/runtime"
+	"github.com/vkumbhar94/runtime"
 
 	strfmt "github.com/go-openapi/strfmt"
 )

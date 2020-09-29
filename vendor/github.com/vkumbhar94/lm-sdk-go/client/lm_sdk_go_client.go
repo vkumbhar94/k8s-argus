@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-openapi/runtime"
-	httptransport "github.com/go-openapi/runtime/client"
+	"github.com/vkumbhar94/runtime"
+	httptransport "github.com/vkumbhar94/runtime/client"
 
 	strfmt "github.com/go-openapi/strfmt"
 

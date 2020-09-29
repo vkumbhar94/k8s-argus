@@ -6,9 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware"
+	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/logicmonitor/k8s-argus/pkg/config"
 	"github.com/logicmonitor/k8s-collectorset-controller/api"
 	collectorsetconstants "github.com/logicmonitor/k8s-collectorset-controller/pkg/constants"
+	"github.com/opentracing/opentracing-go"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
@@ -73,14 +76,23 @@ func GetCSCClient() api.CollectorSetControllerClient {
 func createGRPCConnection() (*grpc.ClientConn, error) {
 	timeout := time.After(10 * time.Minute)
 	ticker := time.NewTicker(10 * time.Second)
+	tracer := opentracing.GlobalTracer()
 	for {
 		select {
 		case <-timeout:
 			return nil, fmt.Errorf("timeout waiting for gRPC connection")
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(10)*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(3)*time.Second)
 			defer cancel()
-			conn, err := grpc.DialContext(ctx, appConfig.Address, grpc.WithBlock(), grpc.WithInsecure())
+			conn, err := grpc.DialContext(ctx, appConfig.Address,
+				grpc.WithBlock(), grpc.WithInsecure(),
+				grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(
+					grpc_opentracing.StreamClientInterceptor(grpc_opentracing.WithTracer(tracer)),
+				)),
+				grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(
+					grpc_opentracing.UnaryClientInterceptor(grpc_opentracing.WithTracer(tracer)),
+				)),
+			)
 			if err != nil {
 				log.Errorf("Error while creating gRPC connection. Error: %v", err.Error())
 			} else {

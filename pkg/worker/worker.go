@@ -8,10 +8,14 @@ import (
 	"sync"
 	"time"
 
+	lmjaeger "github.com/logicmonitor/k8s-argus/pkg/jaeger"
 	"github.com/logicmonitor/k8s-argus/pkg/lmctx"
 	lmlog "github.com/logicmonitor/k8s-argus/pkg/log"
 	rlm "github.com/logicmonitor/k8s-argus/pkg/rl"
 	"github.com/logicmonitor/k8s-argus/pkg/types"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
+	otlog "github.com/opentracing/opentracing-go/log"
 	"github.com/sirupsen/logrus"
 )
 
@@ -133,23 +137,42 @@ func (w *Worker) getTokenizer(category string, method string) *RLTokenizer {
 	return ch.(*RLTokenizer)
 }
 
-func (w *Worker) popRLToken(command types.ICommand) {
+func (w *Worker) popRLToken(lctx *lmctx.LMContext, command types.ICommand) {
+	parentSpan := lmjaeger.Span(lctx)
+	span := lmjaeger.StartSpan(lctx, "pop-token", opentracing.ChildOf(parentSpan.Context()))
+	defer span.Finish()
 	var tmpCommand interface{} = command
 	switch cmdRef := tmpCommand.(type) {
 	case types.IHTTPCommand:
+		span.LogKV("event", "get tokenizer")
 		tch := w.getTokenizer(cmdRef.GetCategory(), cmdRef.GetMethod())
-		err := tch.popToken()
+		span.LogKV("event", "got tokenizer")
+		err := tch.popToken(span)
 		if err != nil && err == context.Canceled {
 			tch = w.getTokenizer(cmdRef.GetCategory(), cmdRef.GetMethod())
-			tch.popToken() // nolint: errcheck, gosec
+			tch.popToken(span) // nolint: errcheck, gosec
 		}
 	}
 }
 
 func (w *Worker) handleCommand(lctx *lmctx.LMContext, command types.ICommand) {
 	log := lmlog.Logger(lctx)
+	parentSpan := lmjaeger.Span(lctx)
+	var span lmjaeger.LMSpan
+	if parentSpan != nil {
+		span = lmjaeger.StartSpan(lctx, "workerExec", opentracing.FollowsFrom(parentSpan.Context()))
+	} else {
+		span = lmjaeger.StartSpan(lctx, "workerExec")
+	}
+	// TODO:: lmjaeger child creater to be return reset function
+	defer func() {
+		lctx.Set("span", parentSpan)
+	}()
+	span.SetTag("worker-id", w.config.ID)
+	span.LogFields(otlog.Event("Executing request"))
+	defer span.Finish()
 	log.Debugf("Poping token")
-	w.popRLToken(command)
+	w.popRLToken(lctx, command)
 	log.Debugf("Token popped")
 	retryMax := w.config.RetryLimit
 	if retryMax < 1 {
@@ -166,8 +189,11 @@ func (w *Worker) handleCommand(lctx *lmctx.LMContext, command types.ICommand) {
 			log.Debugf("Response channel defined %v", wresp)
 			select {
 			case rch <- wresp:
+				span.LogKV("event", "response sent")
 			// to make non blocking, golang unbuffered channels are blocking if there is no goroutine listening on channel. if facade timed out and returned then this would become blocking
 			case <-time.After(2 * time.Millisecond):
+				span.LogKV("event", "response not sent")
+				span.SetTag("error", true)
 				log.Warnf("Response cannot sent")
 			}
 		}
@@ -188,23 +214,30 @@ func getHTTPStatusCode(err error) int {
 }
 func (w *Worker) executeWithRetry(lctx *lmctx.LMContext, retry int, command types.ICommand) (interface{}, error) {
 	log := lmlog.Logger(lctx)
+	span := lmjaeger.Span(lctx)
 	var resp interface{}
 	var err error
 	rateLimitRetry := 0
 	for i := 1; i <= retry && rateLimitRetry < MaxRateLimitRetry; i++ {
+		span.Info("retryCount", i)
 		resp, err = command.Execute()
 		if err == nil {
 			break
 		}
 		code := getHTTPStatusCode(err)
 		log.Debugf("Status code: %v", code)
+		ext.HTTPStatusCode.Set(span, uint16(code))
+		ext.Error.Set(span, code != 200)
 
 		// retry only if request failed because of server error
 		if code >= 500 && code <= 599 {
+			span.LogFields(otlog.Error(err))
 			log.Warningf("Request failed with error %v, retrying for %v time...", err, i)
 			time.Sleep(5 * time.Second)
 		} else if code == http.StatusTooManyRequests { // rate limit reached then send update to rate limit manager
 			req := w.getRLLimit(lctx, command, err)
+			span.LogFields(otlog.Object("rater.limits", req))
+			span.SetTag("throttled", true)
 			w.sendRLLimitUpdate(lctx, req)
 			log.Infof("Waiting for rate limit window %v", req.Window)
 			time.Sleep(time.Duration(req.Window) * time.Second)

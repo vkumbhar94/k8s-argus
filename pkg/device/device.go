@@ -1,7 +1,9 @@
 package device
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/logicmonitor/k8s-argus/pkg/config"
@@ -9,8 +11,11 @@ import (
 	"github.com/logicmonitor/k8s-argus/pkg/device/builder"
 	"github.com/logicmonitor/k8s-argus/pkg/devicecache"
 	"github.com/logicmonitor/k8s-argus/pkg/filters"
+	lmjaeger "github.com/logicmonitor/k8s-argus/pkg/jaeger"
 	"github.com/logicmonitor/k8s-argus/pkg/lmctx"
 	lmlog "github.com/logicmonitor/k8s-argus/pkg/log"
+	"github.com/opentracing-contrib/go-stdlib/nethttp"
+	"github.com/opentracing/opentracing-go"
 
 	//"github.com/logicmonitor/k8s-argus/pkg/lmexec"
 	"github.com/logicmonitor/k8s-argus/pkg/types"
@@ -52,7 +57,7 @@ func buildDevice(lctx *lmctx.LMContext, c *config.Config, d *models.Device, opti
 			option(d)
 		}
 
-		collectorID := cscutils.GetCollectorID()
+		collectorID := cscutils.GetCollectorID(lctx)
 		log.Infof("Using collector ID %d for %q", collectorID, *d.DisplayName)
 		d.PreferredCollectorID = &collectorID
 	} else {
@@ -124,6 +129,17 @@ func (m *Manager) renameAndAddDevice(lctx *lmctx.LMContext, resource string, dev
 	log.Infof("Rename device: %s -> %s", *device.DisplayName, renameResourceName)
 	device.DisplayName = &renameResourceName
 	params := lm.NewAddDeviceParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	addFromWizard := false
 	params.SetAddFromWizard(&addFromWizard)
 	params.SetBody(device)
@@ -172,6 +188,17 @@ func (m *Manager) updateAndReplace(lctx *lmctx.LMContext, resource string, id in
 	log := lmlog.Logger(lctx)
 	opType := "replace"
 	params := lm.NewUpdateDeviceParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	params.SetID(id)
 	params.SetBody(device)
 	params.SetOpType(&opType)
@@ -203,6 +230,17 @@ func (m *Manager) FindByDisplayName(lctx *lmctx.LMContext, resource string, name
 	log := lmlog.Logger(lctx)
 	filter := fmt.Sprintf("displayName:\"%s\"", name)
 	params := lm.NewGetDeviceListParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	params.SetFilter(&filter)
 	cmd := &types.HTTPCommand{
 		Command: &types.Command{
@@ -237,6 +275,17 @@ func (m *Manager) FindByDisplayNames(lctx *lmctx.LMContext, resource string, dis
 	}
 	filter := fmt.Sprintf("displayName:\"%s\"", strings.Join(displayNames, "\"|\""))
 	params := lm.NewGetDeviceListParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	params.SetFilter(&filter)
 	cmd := &types.HTTPCommand{
 		Command: &types.Command{
@@ -311,6 +360,17 @@ func (m *Manager) Add(lctx *lmctx.LMContext, resource string, labels map[string]
 	}
 
 	params := lm.NewAddDeviceParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	addFromWizard := false
 	params.SetAddFromWizard(&addFromWizard)
 	params.SetBody(device)
@@ -401,6 +461,17 @@ func (m *Manager) UpdateAndReplaceField(lctx *lmctx.LMContext, resource string, 
 	log.Debugf("%#v", device)
 
 	params := lm.NewPatchDeviceParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	params.SetID(d.ID)
 	params.SetBody(device)
 	opType := "replace"
@@ -454,6 +525,17 @@ func (m *Manager) UpdateAndReplaceFieldByDisplayName(lctx *lmctx.LMContext, reso
 // DeleteByID implements types.DeviceManager.
 func (m *Manager) DeleteByID(lctx *lmctx.LMContext, resource string, id int32) error {
 	params := lm.NewDeleteDeviceByIDParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	params.SetID(id)
 	cmd := &types.HTTPCommand{
 		Command: &types.Command{
@@ -501,6 +583,17 @@ func (m *Manager) Config() *config.Config {
 func (m *Manager) GetListByGroupID(lctx *lmctx.LMContext, resource string, groupID int32) ([]*models.Device, error) {
 	log := lmlog.Logger(lctx)
 	params := lm.NewGetImmediateDeviceListByDeviceGroupIDParams()
+	span := lmjaeger.Span(lctx)
+	ctx := context.Background()
+	if span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	} else {
+		span = lmjaeger.StartSpan(lctx, "lm-portal-http-call")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
+	client := &http.Client{Transport: &nethttp.Transport{}}
+	params.SetContext(ctx)
+	params.SetHTTPClient(client)
 	params.SetID(groupID)
 	fields := "id,name,displayName,customProperties"
 	params.SetFields(&fields)

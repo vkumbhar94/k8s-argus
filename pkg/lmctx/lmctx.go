@@ -15,6 +15,18 @@ func (lc *LMContext) Set(key string, val interface{}) {
 	lc.kv[key] = val
 }
 
+// NewLMContext creates new context object copying kv
+func (lc *LMContext) NewLMContext() *LMContext {
+	newKv := make(map[string]interface{})
+	for k, v := range lc.kv {
+		newKv[k] = v
+	}
+	ctx := &LMContext{
+		kv: newKv,
+	}
+	return ctx
+}
+
 // NewLMContext creates new context object
 func NewLMContext() *LMContext {
 	ctx := &LMContext{

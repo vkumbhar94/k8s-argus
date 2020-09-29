@@ -23,7 +23,7 @@ func Logger(lctx *lmctx.LMContext) *logrus.Entry {
 func LMContextWithFields(lctx *lmctx.LMContext, fields logrus.Fields) *lmctx.LMContext {
 	entry := Logger(lctx)
 	newEntry := entry.WithFields(fields)
-	ctx := lmctx.NewLMContext()
+	ctx := lctx.NewLMContext()
 	ctx.Set("logger", newEntry)
 	return ctx
 }
