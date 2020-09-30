@@ -99,7 +99,7 @@ func StartSpan(lctx *lmctx.LMContext, operationName string, options ...opentraci
 		lmSpanObj.SetBaggageItem("debug_id", fmt.Sprintf("%v", logger.(*log.Entry).Data["debug_id"]))
 		lmSpanObj.SetTag("debug_id", lmSpanObj.BaggageItem("debug_id"))
 	}
-	lmSpanObj.SetTag("cluster.name", lmconf.ClusterName)
+	lmSpanObj.SetTag("argus.cluster.name", lmconf.ClusterName)
 	lctx.Set("span", lmSpanObj)
 	return lmSpanObj
 }

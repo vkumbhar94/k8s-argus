@@ -160,15 +160,15 @@ func (w *Worker) handleCommand(lctx *lmctx.LMContext, command types.ICommand) {
 	parentSpan := lmjaeger.Span(lctx)
 	var span lmjaeger.LMSpan
 	if parentSpan != nil {
-		span = lmjaeger.StartSpan(lctx, "workerExec", opentracing.FollowsFrom(parentSpan.Context()))
+		span = lmjaeger.StartSpan(lctx, "executeCommand", opentracing.FollowsFrom(parentSpan.Context()))
 	} else {
-		span = lmjaeger.StartSpan(lctx, "workerExec")
+		span = lmjaeger.StartSpan(lctx, "executeCommand")
 	}
 	// TODO:: lmjaeger child creater to be return reset function
 	defer func() {
 		lctx.Set("span", parentSpan)
 	}()
-	span.SetTag("worker-id", w.config.ID)
+	span.SetTag("worker", w.config.ID)
 	span.LogFields(otlog.Event("Executing request"))
 	defer span.Finish()
 	log.Debugf("Poping token")
