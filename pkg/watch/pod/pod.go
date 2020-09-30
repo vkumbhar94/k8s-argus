@@ -177,8 +177,7 @@ func (w *Watcher) update(lctx *lmctx.LMContext, old, new *v1.Pod) {
 	log := lmlog.Logger(lctx)
 	span := lmjaeger.Span(lctx)
 	if _, err := w.UpdateAndReplaceByDisplayName(lctx, "pods",
-		//old.Name, w.(old, new), new.Labels,
-		old.Name, nil, new.Labels,
+		old.Name, w.podUpdateFilter(old, new), new.Labels,
 		w.args(new, constants.PodCategory)...,
 	); err != nil {
 		span.Error("event", "Failed to update", "message", err.Error())
