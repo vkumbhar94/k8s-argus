@@ -88,8 +88,12 @@ func (span *LMSpanObject) Error(alternatingKeyValues ...interface{}) {
 	span.SetTag("error", true)
 }
 
+type SpanReseter func()
+
 // StartSpan creates new span and injects it in lmcontext object
-func StartSpan(lctx *lmctx.LMContext, operationName string, options ...opentracing.StartSpanOption) LMSpan {
+// consumer must call reset - preferrably defer reset function to reset previous span in lm context
+func StartSpan(lctx *lmctx.LMContext, operationName string, options ...opentracing.StartSpanOption) (LMSpan, SpanReseter) {
+	parentSpan := Span(lctx)
 	span := opentracing.StartSpan(operationName, options...)
 	lmSpanObj := &LMSpanObject{
 		Span: span.(*jaeger.Span),
@@ -101,7 +105,12 @@ func StartSpan(lctx *lmctx.LMContext, operationName string, options ...opentraci
 	}
 	lmSpanObj.SetTag("argus.cluster.name", lmconf.ClusterName)
 	lctx.Set("span", lmSpanObj)
-	return lmSpanObj
+	if parentSpan != nil {
+		return lmSpanObj, func() {
+			lctx.Set("span", parentSpan)
+		}
+	}
+	return lmSpanObj, func() {}
 }
 
 // Span returns span object from lmcontext object

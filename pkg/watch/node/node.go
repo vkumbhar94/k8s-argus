@@ -8,6 +8,7 @@ import (
 
 	"github.com/logicmonitor/k8s-argus/pkg/constants"
 	"github.com/logicmonitor/k8s-argus/pkg/devicegroup"
+	lmjaeger "github.com/logicmonitor/k8s-argus/pkg/jaeger"
 	"github.com/logicmonitor/k8s-argus/pkg/lmctx"
 	lmlog "github.com/logicmonitor/k8s-argus/pkg/log"
 	"github.com/logicmonitor/k8s-argus/pkg/types"
@@ -58,11 +59,17 @@ func (w *Watcher) AddFunc() func(obj interface{}) {
 		node := obj.(*v1.Node)
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + node.Name}))
 		log := lmlog.Logger(lctx)
+		span, resetter := lmjaeger.StartSpan(lctx, "newNode")
+		defer span.Finish()
+		defer resetter()
+		//span.K8sObject("pod", pod)
+		span.SetTag("name", node.Name)
 
 		log.Debugf("Handling add node event: %s", node.Name)
 
 		// Require an IP address.
 		if getInternalAddress(node.Status.Addresses) == nil {
+			span.Error("event", "No IP")
 			return
 		}
 		w.add(lctx, node)
@@ -76,6 +83,13 @@ func (w *Watcher) UpdateFunc() func(oldObj, newObj interface{}) {
 		new := newObj.(*v1.Node)
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + old.Name}))
 		log := lmlog.Logger(lctx)
+		span, resetter := lmjaeger.StartSpan(lctx, "updateNode")
+		defer span.Finish()
+		defer resetter()
+		//span.K8sObject("oldPod", old)
+		//span.K8sObject("newPod", new)
+		span.SetTag("name", old.Name)
+		span.Info("event", old.Name+" replaced with "+new.Name)
 
 		log.Debugf("Handling update node event: %s", old.Name)
 
@@ -84,6 +98,7 @@ func (w *Watcher) UpdateFunc() func(oldObj, newObj interface{}) {
 		oldInternalAddress := getInternalAddress(old.Status.Addresses)
 		newInternalAddress := getInternalAddress(new.Status.Addresses)
 		if oldInternalAddress == nil && newInternalAddress != nil {
+			span.Info("event", "IP assigned")
 			w.add(lctx, new)
 			return
 		}
@@ -102,11 +117,17 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 		node := obj.(*v1.Node)
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + node.Name}))
 		log := lmlog.Logger(lctx)
+		span, resetter := lmjaeger.StartSpan(lctx, "deleteNode")
+		defer span.Finish()
+		defer resetter()
+		//span.K8sObject("pod", pod)
+		span.SetTag("name", node.Name)
 
 		log.Debugf("Handling delete node event: %s", node.Name)
 
 		// Delete the node.
 		if w.Config().DeleteDevices {
+			span.SetTag("lm.action", "permanent delete")
 			if err := w.DeleteByDisplayName(lctx, w.Resource(), node.Name); err != nil {
 				log.Errorf("Failed to delete node: %v", err)
 				return
@@ -114,6 +135,7 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 			log.Infof("Deleted node %s", node.Name)
 			return
 		}
+		span.SetTag("lm.action", "move")
 
 		// Move the node.
 		w.move(lctx, node)
@@ -123,11 +145,15 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 // nolint: dupl
 func (w *Watcher) add(lctx *lmctx.LMContext, node *v1.Node) {
 	log := lmlog.Logger(lctx)
-	if _, err := w.Add(lctx, w.Resource(), node.Labels, w.args(node, constants.NodeCategory)...); err != nil {
+	span := lmjaeger.Span(lctx)
+	d, err := w.Add(lctx, w.Resource(), node.Labels, w.args(node, constants.NodeCategory)...)
+	if err != nil {
+		span.Error("event", "Failed", "message", err.Error())
 		log.Errorf("Failed to add node %q: %v", node.Name, err)
-	} else {
-		log.Infof("Added node %q", node.Name)
 	}
+	span.SetTag("lm.device.id", d.ID)
+	span.Info("event", "Added")
+	log.Infof("Added node %q", node.Name)
 
 	w.createRoleDeviceGroup(lctx, node.Labels)
 }
@@ -140,11 +166,15 @@ func (w *Watcher) nodeUpdateFilter(old, new *v1.Node) types.UpdateFilter {
 
 func (w *Watcher) update(lctx *lmctx.LMContext, old, new *v1.Node) {
 	log := lmlog.Logger(lctx)
-	if _, err := w.UpdateAndReplaceByDisplayName(lctx, "nodes", old.Name, w.nodeUpdateFilter(old, new), new.Labels, w.args(new, constants.NodeCategory)...); err != nil {
+	span := lmjaeger.Span(lctx)
+	d, err := w.UpdateAndReplaceByDisplayName(lctx, "nodes", old.Name, w.nodeUpdateFilter(old, new), new.Labels, w.args(new, constants.NodeCategory)...)
+	if err != nil {
+		span.Error("event", "Failed", "message", err.Error())
 		log.Errorf("Failed to update node %q: %v", new.Name, err)
-	} else {
-		log.Infof("Updated node %q", old.Name)
 	}
+	log.Infof("Updated node %q", old.Name)
+	span.SetTag("lm.device.id", d.ID)
+	span.Info("event", "Updated")
 
 	// determine if we need to add a new node role device group
 	oldLabel, _ := utilities.GetLabelByPrefix(constants.LabelNodeRole, old.Labels)
@@ -157,10 +187,15 @@ func (w *Watcher) update(lctx *lmctx.LMContext, old, new *v1.Node) {
 // nolint: dupl
 func (w *Watcher) move(lctx *lmctx.LMContext, node *v1.Node) {
 	log := lmlog.Logger(lctx)
-	if _, err := w.UpdateAndReplaceFieldByDisplayName(lctx, w.Resource(), node.Name, constants.CustomPropertiesFieldName, w.args(node, constants.NodeDeletedCategory)...); err != nil {
+	span := lmjaeger.Span(lctx)
+	d, err := w.UpdateAndReplaceFieldByDisplayName(lctx, w.Resource(), node.Name, constants.CustomPropertiesFieldName, w.args(node, constants.NodeDeletedCategory)...)
+	if err != nil {
 		log.Errorf("Failed to move node %q: %v", node.Name, err)
+		span.Error("event", "Failed", "message", err.Error())
 		return
 	}
+	span.SetTag("event", "Moved")
+	span.SetTag("lm.device.id", d.ID)
 	log.Infof("Moved node %q", node.Name)
 }
 

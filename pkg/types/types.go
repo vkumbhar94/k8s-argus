@@ -115,7 +115,7 @@ type DeviceBuilder interface {
 type UpdateFilter func() bool
 
 // ExecRequest funnction type to point to execute fubction
-type ExecRequest func() (interface{}, error)
+type ExecRequest func(*lmctx.LMContext) (interface{}, error)
 
 // ParseErrResp function signature to parse error response
 type ParseErrResp func(error) *models.ErrorResponse
@@ -164,7 +164,7 @@ type HTTPWorker interface {
 
 // ICommand based command interface
 type ICommand interface {
-	Execute() (interface{}, error)
+	Execute(*lmctx.LMContext) (interface{}, error)
 	LMContext() *lmctx.LMContext
 }
 
@@ -182,8 +182,8 @@ type Command struct {
 }
 
 // Execute command execute
-func (c *Command) Execute() (interface{}, error) {
-	return c.ExecFun()
+func (c *Command) Execute(lctx *lmctx.LMContext) (interface{}, error) {
+	return c.ExecFun(lctx)
 }
 
 // LMContext return LMContext object from command

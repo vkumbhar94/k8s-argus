@@ -139,8 +139,9 @@ func (w *Worker) getTokenizer(category string, method string) *RLTokenizer {
 
 func (w *Worker) popRLToken(lctx *lmctx.LMContext, command types.ICommand) {
 	parentSpan := lmjaeger.Span(lctx)
-	span := lmjaeger.StartSpan(lctx, "pop-token", opentracing.ChildOf(parentSpan.Context()))
+	span, resetter := lmjaeger.StartSpan(lctx, "popToken", opentracing.ChildOf(parentSpan.Context()))
 	defer span.Finish()
+	defer resetter()
 	var tmpCommand interface{} = command
 	switch cmdRef := tmpCommand.(type) {
 	case types.IHTTPCommand:
@@ -149,6 +150,7 @@ func (w *Worker) popRLToken(lctx *lmctx.LMContext, command types.ICommand) {
 		span.LogKV("event", "got tokenizer")
 		err := tch.popToken(span)
 		if err != nil && err == context.Canceled {
+			span.SetTag("canceledTokenizer", true)
 			tch = w.getTokenizer(cmdRef.GetCategory(), cmdRef.GetMethod())
 			tch.popToken(span) // nolint: errcheck, gosec
 		}
@@ -159,18 +161,16 @@ func (w *Worker) handleCommand(lctx *lmctx.LMContext, command types.ICommand) {
 	log := lmlog.Logger(lctx)
 	parentSpan := lmjaeger.Span(lctx)
 	var span lmjaeger.LMSpan
+	var reseter lmjaeger.SpanReseter
 	if parentSpan != nil {
-		span = lmjaeger.StartSpan(lctx, "executeCommand", opentracing.FollowsFrom(parentSpan.Context()))
+		span, reseter = lmjaeger.StartSpan(lctx, "executeCommand", opentracing.FollowsFrom(parentSpan.Context()))
 	} else {
-		span = lmjaeger.StartSpan(lctx, "executeCommand")
+		span, reseter = lmjaeger.StartSpan(lctx, "executeCommand")
 	}
-	// TODO:: lmjaeger child creater to be return reset function
-	defer func() {
-		lctx.Set("span", parentSpan)
-	}()
+	defer span.Finish()
+	defer reseter()
 	span.SetTag("worker", w.config.ID)
 	span.LogFields(otlog.Event("Executing request"))
-	defer span.Finish()
 	log.Debugf("Poping token")
 	w.popRLToken(lctx, command)
 	log.Debugf("Token popped")
@@ -220,7 +220,7 @@ func (w *Worker) executeWithRetry(lctx *lmctx.LMContext, retry int, command type
 	rateLimitRetry := 0
 	for i := 1; i <= retry && rateLimitRetry < MaxRateLimitRetry; i++ {
 		span.Info("retryCount", i)
-		resp, err = command.Execute()
+		resp, err = command.Execute(lctx)
 		if err == nil {
 			break
 		}

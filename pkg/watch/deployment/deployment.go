@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/logicmonitor/k8s-argus/pkg/constants"
+	lmjaeger "github.com/logicmonitor/k8s-argus/pkg/jaeger"
 	"github.com/logicmonitor/k8s-argus/pkg/lmctx"
 	lmlog "github.com/logicmonitor/k8s-argus/pkg/log"
 	"github.com/logicmonitor/k8s-argus/pkg/permission"
@@ -55,6 +56,11 @@ func (w *Watcher) AddFunc() func(obj interface{}) {
 		deployment := obj.(*appsv1.Deployment)
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + deployment.Name}))
 		log := lmlog.Logger(lctx)
+		span, resetter := lmjaeger.StartSpan(lctx, "newDeployment")
+		defer span.Finish()
+		defer resetter()
+		//span.K8sObject("pod", pod)
+		span.SetTag("name", deployment.Name)
 		log.Infof("Handling add deployment event: %s", deployment.Name)
 		w.add(lctx, deployment)
 	}
@@ -67,6 +73,13 @@ func (w *Watcher) UpdateFunc() func(oldObj, newObj interface{}) {
 		new := newObj.(*appsv1.Deployment)
 
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + old.Name}))
+		span, resetter := lmjaeger.StartSpan(lctx, "updateDeployment")
+		defer resetter()
+		defer span.Finish()
+		//span.K8sObject("oldPod", old)
+		//span.K8sObject("newPod", new)
+		span.SetTag("name", old.Name)
+		span.Info("event", old.Name+" replaced with "+new.Name)
 		w.update(lctx, old, new)
 	}
 }
@@ -77,17 +90,27 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 		deployment := obj.(*appsv1.Deployment)
 		lctx := lmlog.NewLMContextWith(logrus.WithFields(logrus.Fields{"device_id": resource + "-" + deployment.Name}))
 		log := lmlog.Logger(lctx)
+		span, resetter := lmjaeger.StartSpan(lctx, "deleteDeployment")
+		defer resetter()
+		defer span.Finish()
+		//span.K8sObject("pod", pod)
+		span.SetTag("name", deployment.Name)
 		log.Debugf("Handling delete deployment event: %s", deployment.Name)
 		// Delete the deployment.
 		if w.Config().DeleteDevices {
+			span.SetTag("lm.action", "permanent delete")
 			if err := w.DeleteByDisplayName(lctx, w.Resource(), fmtDeploymentDisplayName(deployment)); err != nil {
+				span.Error("event", "Failed", "message", err.Error())
+
 				log.Errorf("Failed to delete deployment: %v", err)
 				return
 			}
+			span.Info("event", "success")
 			log.Infof("Deleted deployment %s", deployment.Name)
 			return
 		}
 
+		span.SetTag("lm.action", "move")
 		// Move the deployment.
 		w.move(lctx, deployment)
 	}
@@ -96,34 +119,47 @@ func (w *Watcher) DeleteFunc() func(obj interface{}) {
 // nolint: dupl
 func (w *Watcher) add(lctx *lmctx.LMContext, deployment *appsv1.Deployment) {
 	log := lmlog.Logger(lctx)
-	if _, err := w.Add(lctx, w.Resource(), deployment.Labels,
+	span := lmjaeger.Span(lctx)
+	d, err := w.Add(lctx, w.Resource(), deployment.Labels,
 		w.args(deployment, constants.DeploymentCategory)...,
-	); err != nil {
+	)
+	if err != nil {
+		span.Error("event", "Failed", "message", err.Error())
 		log.Errorf("Failed to add deployment %q: %v", fmtDeploymentDisplayName(deployment), err)
 		return
 	}
+	span.Info("event", "created device")
+	span.SetTag("lm.device.id", d.ID)
 	log.Infof("Added deployment %q", fmtDeploymentDisplayName(deployment))
 }
 
 func (w *Watcher) update(lctx *lmctx.LMContext, old, new *appsv1.Deployment) {
 	log := lmlog.Logger(lctx)
-	if _, err := w.UpdateAndReplaceByDisplayName(lctx, "deployments",
+	span := lmjaeger.Span(lctx)
+	d, err := w.UpdateAndReplaceByDisplayName(lctx, "deployments",
 		fmtDeploymentDisplayName(old), nil, new.Labels,
 		w.args(new, constants.DeploymentCategory)...,
-	); err != nil {
+	)
+	if err != nil {
+		span.Error("event", "Failed", "message", err.Error())
 		log.Errorf("Failed to update deployment %q: %v", fmtDeploymentDisplayName(new), err)
 		return
 	}
+	span.SetTag("lm.device.id", d.ID)
 	log.Infof("Updated deployment %q", fmtDeploymentDisplayName(old))
 }
 
 // nolint: dupl
 func (w *Watcher) move(lctx *lmctx.LMContext, deployment *appsv1.Deployment) {
 	log := lmlog.Logger(lctx)
-	if _, err := w.UpdateAndReplaceFieldByDisplayName(lctx, w.Resource(), fmtDeploymentDisplayName(deployment), constants.CustomPropertiesFieldName, w.args(deployment, constants.DeploymentDeletedCategory)...); err != nil {
+	span := lmjaeger.Span(lctx)
+	d, err := w.UpdateAndReplaceFieldByDisplayName(lctx, w.Resource(), fmtDeploymentDisplayName(deployment), constants.CustomPropertiesFieldName, w.args(deployment, constants.DeploymentDeletedCategory)...)
+	if err != nil {
+		span.Error("event", "Failed to move", "message", err.Error())
 		log.Errorf("Failed to move deployment %q: %v", fmtDeploymentDisplayName(deployment), err)
 		return
 	}
+	span.SetTag("lm.device.id", d.ID)
 	log.Infof("Moved deployment %q", fmtDeploymentDisplayName(deployment))
 }
 
