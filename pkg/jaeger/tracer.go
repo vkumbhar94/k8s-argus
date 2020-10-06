@@ -14,7 +14,7 @@ import (
 	"github.com/logicmonitor/k8s-argus/pkg/lmctx"
 	"github.com/opentracing/opentracing-go"
 	log "github.com/sirupsen/logrus"
-	"github.com/uber/jaeger-client-go"
+	//"github.com/uber/jaeger-client-go"
 	jaegercfg "github.com/uber/jaeger-client-go/config"
 	"gopkg.in/yaml.v2"
 )
@@ -64,7 +64,7 @@ type LMSpan interface {
 }
 
 type LMSpanObject struct {
-	*jaeger.Span
+	opentracing.Span
 }
 
 func (span *LMSpanObject) Info(alternatingKeyValues ...interface{}) {
@@ -96,7 +96,7 @@ func StartSpan(lctx *lmctx.LMContext, operationName string, options ...opentraci
 	parentSpan := Span(lctx)
 	span := opentracing.StartSpan(operationName, options...)
 	lmSpanObj := &LMSpanObject{
-		Span: span.(*jaeger.Span),
+		Span: span.(opentracing.Span),
 	}
 	logger := lctx.Extract("logger")
 	if logger != nil {

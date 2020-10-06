@@ -290,7 +290,7 @@ func (a *Argus) Watch() {
 		_, controller := cache.NewInformer(
 			watchlist,
 			w.ObjType(),
-			time.Minute*1,
+			time.Minute*10,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc:    w.AddFunc(),
 				DeleteFunc: w.DeleteFunc(),
